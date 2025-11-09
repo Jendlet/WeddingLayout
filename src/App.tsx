@@ -61,7 +61,6 @@ const DEFAULT_TABLES: Table[] = [
   },
 ]
 
-const SEAT_OPTIONS = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24] as const
 const STORAGE_KEY = 'wedding-layout-state-v1'
 
 type LayoutState = {
@@ -1158,43 +1157,17 @@ function App() {
               </header>
               <div className="menu-section">
                 <span className="menu-label">Seat count</span>
-                <div className="menu-pill-group">
-                  {SEAT_OPTIONS.map((option) => (
-                    <button
-                      key={option}
-                      type="button"
-                      className={`menu-pill ${
-                        activeTable.seatCount === option ? 'active' : ''
-                      }`}
-                      onClick={() => updateSeatCount(activeTable.id, option)}
-                    >
-                      {option}
-                    </button>
-                  ))}
-                </div>
-                <label className="menu-range">
-                  <span>Custom</span>
-                  <input
-                    type="range"
-                    min={1}
-                    max={24}
-                    value={activeTable.seatCount}
-                    onChange={(event) =>
-                      updateSeatCount(
-                        activeTable.id,
-                        Number(event.target.value) || 1,
-                      )
-                    }
-                  />
+                <label className="menu-input">
                   <input
                     type="number"
                     min={1}
                     max={24}
+                    inputMode="numeric"
                     value={activeTable.seatCount}
                     onChange={(event) =>
                       updateSeatCount(
                         activeTable.id,
-                        Number(event.target.value) || 1,
+                        Number(event.target.value),
                       )
                     }
                   />

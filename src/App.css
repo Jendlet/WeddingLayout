@@ -164,6 +164,7 @@
   cursor: pointer;
 }
 
+
 .add-table-button {
   align-self: flex-start;
   padding: 10px 14px;
@@ -367,62 +368,14 @@ details pre {
   letter-spacing: 0.04em;
 }
 
-.menu-pill-group {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.menu-pill {
-  flex: 0 0 calc(25% - 6px);
-  min-width: 44px;
-  padding: 6px 0;
-  border-radius: 14px;
-  border: 1px solid rgba(47, 88, 205, 0.2);
-  background: rgba(47, 88, 205, 0.06);
-  color: #1d4ed8;
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
-}
-
-.menu-pill.active {
-  background: #1d4ed8;
-  border-color: #1d4ed8;
-  color: #ffffff;
-}
-
-.menu-pill:hover {
-  background: rgba(29, 78, 216, 0.2);
-  border-color: rgba(29, 78, 216, 0.6);
-}
-
-.menu-range {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 10px;
-  align-items: center;
-}
-
-.menu-range span {
-  grid-column: 1 / -1;
-  font-size: 0.8rem;
-  color: #52606d;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.menu-range input[type='range'] {
-  width: 100%;
-}
-
-.menu-range input[type='number'] {
-  width: 72px;
-  padding: 6px 8px;
+.menu-input input {
+  width: 92px;
+  padding: 6px 10px;
   border-radius: 6px;
   border: 1px solid rgba(82, 96, 109, 0.4);
-  font-size: 0.85rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-align: center;
 }
 
 .menu-danger {
