@@ -11,6 +11,15 @@ type Table = {
   id: string
   seatCount: number
   position: { x: number; y: number }
+  shape: 'circle' | 'square'
+  distribution?: SquareSeatDistribution
+}
+
+type SquareSeatDistribution = {
+  top: number
+  right: number
+  bottom: number
+  left: number
 }
 
 type LayoutSnapshot = {
@@ -19,6 +28,71 @@ type LayoutSnapshot = {
   tables: Table[]
   assignments: Record<string, string | null>
   unassigned: string[]
+}
+
+const createDistributionFromSeatCount = (
+  seatCount: number,
+): SquareSeatDistribution => {
+  const counts: SquareSeatDistribution = {
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  }
+  const sides: Array<keyof SquareSeatDistribution> = [
+    'top',
+    'right',
+    'bottom',
+    'left',
+  ]
+  const sanitized = Math.max(1, Math.floor(seatCount))
+  for (let index = 0; index < sanitized; index += 1) {
+    const side = sides[index % sides.length]
+    counts[side] += 1
+  }
+  return counts
+}
+
+const sanitizeDistribution = (
+  raw: Partial<Record<keyof SquareSeatDistribution, unknown>>,
+  fallback: number,
+): SquareSeatDistribution => {
+  const entries: Array<keyof SquareSeatDistribution> = [
+    'top',
+    'right',
+    'bottom',
+    'left',
+  ]
+  const distribution = entries.reduce<SquareSeatDistribution>(
+    (accumulator, key) => {
+      const value = raw[key]
+      const numeric = Number(value)
+      return {
+        ...accumulator,
+        [key]: Number.isFinite(numeric) ? Math.max(0, Math.floor(numeric)) : 0,
+      }
+    },
+    { top: 0, right: 0, bottom: 0, left: 0 },
+  )
+
+  const sum =
+    distribution.top +
+    distribution.right +
+    distribution.bottom +
+    distribution.left
+
+  if (sum === 0) {
+    return createDistributionFromSeatCount(fallback)
+  }
+
+  return distribution
+}
+
+const ensureSquareDistribution = (table: Table): SquareSeatDistribution => {
+  if (table.distribution) {
+    return table.distribution
+  }
+  return createDistributionFromSeatCount(table.seatCount)
 }
 
 const seatKey = (tableId: string, seatIndex: number) => `${tableId}:${seatIndex}`
@@ -53,11 +127,13 @@ const DEFAULT_TABLES: Table[] = [
     id: 'table-1',
     seatCount: 8,
     position: { x: 120, y: 100 },
+    shape: 'circle',
   },
   {
     id: 'table-2',
     seatCount: 8,
     position: { x: 420, y: 300 },
+    shape: 'circle',
   },
 ]
 
@@ -95,12 +171,16 @@ const normalizeLayoutPayload = (payload: unknown): LayoutState | null => {
       const record = item as Record<string, unknown>
       const id = typeof record.id === 'string' ? record.id : ''
       const seatCountValue = record.seatCount
-      const seatCount =
+      const seatCountNumeric =
         typeof seatCountValue === 'number'
           ? seatCountValue
           : typeof seatCountValue === 'string'
             ? Number(seatCountValue)
             : NaN
+      const shape =
+        record.shape === 'square' || record.shape === 'circle'
+          ? record.shape
+          : 'circle'
       const positionRecord =
         typeof record.position === 'object' && record.position !== null
           ? (record.position as Record<string, unknown>)
@@ -120,17 +200,44 @@ const normalizeLayoutPayload = (payload: unknown): LayoutState | null => {
             ? Number(rawY)
             : 0
 
-      if (!id || Number.isNaN(seatCount)) {
+      if (!id || Number.isNaN(seatCountNumeric)) {
         return accumulator
+      }
+
+      let distribution: SquareSeatDistribution | undefined
+      let normalizedSeatCount = Math.max(1, Math.floor(seatCountNumeric))
+
+      if (shape === 'square') {
+        const rawDistribution =
+          typeof record.distribution === 'object' && record.distribution !== null
+            ? (record.distribution as Partial<
+                Record<keyof SquareSeatDistribution, unknown>
+              >)
+            : undefined
+        distribution = sanitizeDistribution(
+          rawDistribution ?? {},
+          normalizedSeatCount,
+        )
+        normalizedSeatCount =
+          distribution.top +
+          distribution.right +
+          distribution.bottom +
+          distribution.left
+        if (normalizedSeatCount === 0) {
+          distribution = createDistributionFromSeatCount(4)
+          normalizedSeatCount = 4
+        }
       }
 
       accumulator.push({
         id,
-        seatCount: Math.max(1, Math.floor(seatCount)),
+        seatCount: normalizedSeatCount,
         position: {
           x: Number.isFinite(x) ? x : 0,
           y: Number.isFinite(y) ? y : 0,
         },
+        shape,
+        distribution,
       })
       return accumulator
     },
@@ -557,6 +664,7 @@ function App() {
       id: `table-${Date.now()}`,
       seatCount,
       position: { x: 80 + tables.length * 60, y: 80 + tables.length * 40 },
+      shape: 'circle',
     }
 
     setTables((prev) => [...prev, nextTable])
@@ -589,6 +697,27 @@ function App() {
       }
     }
     return -1
+  }
+
+  const updateTableShape = (tableId: string, shape: Table['shape']) => {
+    const table = tables.find((entry) => entry.id === tableId)
+    if (!table || table.shape === shape) {
+      return
+    }
+
+    if (shape === 'square') {
+      const distribution = ensureSquareDistribution(table)
+      applySquareDistribution(tableId, distribution)
+    } else {
+      setTables((prevTables) =>
+        prevTables.map((entry) =>
+          entry.id === tableId
+            ? { ...entry, shape: 'circle', distribution: undefined }
+            : entry,
+        ),
+      )
+      updateSeatCount(tableId, table.seatCount)
+    }
   }
 
   const handleTableDrop = (
@@ -657,6 +786,113 @@ function App() {
     })
 
     returnGuestsToPool(returningGuests)
+  }
+
+  const applySquareDistribution = (
+    tableId: string,
+    nextDistribution: SquareSeatDistribution,
+  ) => {
+    const table = tables.find((entry) => entry.id === tableId)
+    if (!table) {
+      return
+    }
+
+    const nextSeatCount = Math.max(
+      1,
+      nextDistribution.top +
+        nextDistribution.right +
+        nextDistribution.bottom +
+        nextDistribution.left,
+    )
+
+    const returningGuests: string[] = []
+    setAssignments((prevAssignments) => {
+      const nextAssignments = { ...prevAssignments }
+
+      if (nextSeatCount < table.seatCount) {
+        for (
+          let seatIdx = nextSeatCount;
+          seatIdx < table.seatCount;
+          seatIdx += 1
+        ) {
+          const key = seatKey(table.id, seatIdx)
+          const guestId = nextAssignments[key]
+          if (guestId) {
+            returningGuests.push(guestId)
+          }
+          delete nextAssignments[key]
+        }
+      } else if (nextSeatCount > table.seatCount) {
+        for (
+          let seatIdx = table.seatCount;
+          seatIdx < nextSeatCount;
+          seatIdx += 1
+        ) {
+          nextAssignments[seatKey(table.id, seatIdx)] = null
+        }
+      }
+
+      return nextAssignments
+    })
+
+    if (returningGuests.length > 0) {
+      returnGuestsToPool(returningGuests)
+    }
+
+    setTables((prevTables) =>
+      prevTables.map((entry) =>
+        entry.id === tableId
+          ? {
+              ...entry,
+              shape: 'square',
+              distribution: nextDistribution,
+              seatCount: nextSeatCount,
+            }
+          : entry,
+      ),
+    )
+  }
+
+  const updateSquareDistribution = (
+    tableId: string,
+    side: keyof SquareSeatDistribution,
+    newValue: number,
+  ) => {
+    const table = tables.find((entry) => entry.id === tableId)
+    if (!table || table.shape !== 'square') {
+      return
+    }
+
+    const distribution = ensureSquareDistribution(table)
+    const sanitized = Number.isFinite(newValue)
+      ? Math.max(0, Math.floor(newValue))
+      : 0
+    const nextDistribution: SquareSeatDistribution = {
+      ...distribution,
+      [side]: sanitized,
+    }
+
+    const sum =
+      nextDistribution.top +
+      nextDistribution.right +
+      nextDistribution.bottom +
+      nextDistribution.left
+
+    if (sum === 0) {
+      nextDistribution[side] = 1
+    }
+
+    const unchanged =
+      distribution.top === nextDistribution.top &&
+      distribution.right === nextDistribution.right &&
+      distribution.bottom === nextDistribution.bottom &&
+      distribution.left === nextDistribution.left
+
+    if (unchanged) {
+      return
+    }
+
+    applySquareDistribution(tableId, nextDistribution)
   }
 
   const handleRemoveTable = (tableId: string) => {
@@ -917,15 +1153,141 @@ function App() {
     clearSelectionIfMissing()
   }, [assignments])
 
-  const renderSeats = (table: Table) => {
+  const getTableMetrics = (table: Table) => {
+    if (table.shape === 'circle') {
+      const seatRadius = 22
+      const width = 180
+      const height = 180
+      const bodyInset = 28
+      return {
+        seatRadius,
+        width,
+        height,
+        bodyInset,
+        circleRadius: 70,
+        distribution: undefined,
+        seatOffsetX: 0,
+        seatOffsetY: 0,
+      }
+    }
+
+    const distribution = ensureSquareDistribution(table)
+    const seatRadius = 18
+    const baseSize = 160
+    const increment = 20
+
+    const horizontal = Math.max(distribution.top, distribution.bottom)
+    const vertical = Math.max(distribution.left, distribution.right)
+
+    const width = baseSize + Math.max(0, horizontal - 2) * increment
+    const height = baseSize + Math.max(0, vertical - 2) * increment
+    const bodyInset = 20
+
+    const seatOffsetX = width / 2 - bodyInset + seatRadius + 6
+    const seatOffsetY = height / 2 - bodyInset + seatRadius + 6
+
+    return {
+      seatRadius,
+      width,
+      height,
+      bodyInset,
+      circleRadius: 0,
+      distribution,
+      seatOffsetX,
+      seatOffsetY,
+    }
+  }
+
+  const renderSeats = (
+    table: Table,
+    metrics?: ReturnType<typeof getTableMetrics>,
+  ) => {
+    const {
+      seatRadius,
+      circleRadius,
+      width,
+      height,
+      bodyInset,
+      distribution,
+      seatOffsetX,
+      seatOffsetY,
+    } = metrics ?? getTableMetrics(table)
+
     const seatElements = []
-    const radius = 70
-    const seatRadius = 22
+    const halfWidth = width / 2 - bodyInset
+    const halfHeight = height / 2 - bodyInset
+    const edgePaddingX = Math.min(halfWidth, 16)
+    const edgePaddingY = Math.min(halfHeight, 16)
+
+    const squareSegments =
+      table.shape === 'square' && distribution
+        ? (['top', 'right', 'bottom', 'left'] as const).map((side) => ({
+            side,
+            count: distribution![side],
+          }))
+        : []
+
     for (let seatIndex = 0; seatIndex < table.seatCount; seatIndex += 1) {
-      const angle =
-        Math.PI * 1.5 + (seatIndex * (Math.PI * 2)) / table.seatCount
-      const x = Math.cos(angle) * radius
-      const y = Math.sin(angle) * radius
+      let x = 0
+      let y = 0
+      if (table.shape === 'circle' || !distribution) {
+        const angle =
+          Math.PI * 1.5 + (seatIndex * (Math.PI * 2)) / table.seatCount
+        x = Math.cos(angle) * circleRadius
+        y = Math.sin(angle) * circleRadius
+      } else {
+        let remaining = seatIndex
+        let currentSide: keyof SquareSeatDistribution = 'top'
+        let sideSeatCount = distribution.top
+
+        for (const segment of squareSegments) {
+          if (segment.count <= 0) {
+            continue
+          }
+          if (remaining < segment.count) {
+            currentSide = segment.side
+            sideSeatCount = segment.count
+            break
+          }
+          remaining -= segment.count
+        }
+
+        const localIndex = Math.min(remaining, Math.max(0, sideSeatCount - 1))
+        const ratio =
+          sideSeatCount <= 1
+            ? 0.5
+            : localIndex / Math.max(1, sideSeatCount - 1)
+
+        const horizontalSpan = Math.max(
+          0,
+          width - bodyInset * 2 - edgePaddingX * 2,
+        )
+        const verticalSpan = Math.max(
+          0,
+          height - bodyInset * 2 - edgePaddingY * 2,
+        )
+
+        switch (currentSide) {
+          case 'top':
+            x = -halfWidth + edgePaddingX + horizontalSpan * ratio
+            y = -seatOffsetY
+            break
+          case 'right':
+            x = seatOffsetX
+            y = -halfHeight + edgePaddingY + verticalSpan * ratio
+            break
+          case 'bottom':
+            x = halfWidth - edgePaddingX - horizontalSpan * ratio
+            y = seatOffsetY
+            break
+          case 'left':
+          default:
+            x = -seatOffsetX
+            y = halfHeight - edgePaddingY - verticalSpan * ratio
+            break
+        }
+      }
+
       const key = seatKey(table.id, seatIndex)
       const guestId = assignments[key]
       const guest = guestId ? guestMap.get(guestId) : null
@@ -985,6 +1347,11 @@ function App() {
     }
     return tables.find((table) => table.id === menuState.tableId) ?? null
   }, [menuState, tables])
+
+  const activeDistribution =
+    activeTable && activeTable.shape === 'square'
+      ? ensureSquareDistribution(activeTable)
+      : null
 
   const menuPosition = useMemo(() => {
     if (!menuState) {
@@ -1105,31 +1472,44 @@ function App() {
 
       <main className="canvas-container">
         <div className="canvas">
-          {tables.map((table) => (
-            <div
-              key={table.id}
-              className="table"
-              style={{
-                transform: `translate(${table.position.x}px, ${table.position.y}px)`,
-              }}
-              onMouseDown={(event) => handleTableMouseDown(table.id, event)}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => handleTableDrop(table.id, event)}
-            >
-              <div className="table-body">
-                <button
-                  type="button"
-                  className="table-menu-button"
-                  data-drag="blocked"
-                  onClick={(event) => openTableMenu(table.id, event)}
-                  aria-label="Open table settings"
+          {tables.map((table) => {
+            const metrics = getTableMetrics(table)
+            return (
+              <div
+                key={table.id}
+                className={`table ${table.shape}`}
+                style={{
+                  transform: `translate(${table.position.x}px, ${table.position.y}px)`,
+                  width: `${metrics.width}px`,
+                  height: `${metrics.height}px`,
+                }}
+                onMouseDown={(event) => handleTableMouseDown(table.id, event)}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => handleTableDrop(table.id, event)}
+              >
+                <div
+                  className={`table-body ${table.shape}`}
+                  style={{
+                    top: `${metrics.bodyInset}px`,
+                    right: `${metrics.bodyInset}px`,
+                    bottom: `${metrics.bodyInset}px`,
+                    left: `${metrics.bodyInset}px`,
+                  }}
                 >
-                  ⋮
-                </button>
+                  <button
+                    type="button"
+                    className="table-menu-button"
+                    data-drag="blocked"
+                    onClick={(event) => openTableMenu(table.id, event)}
+                    aria-label="Open table settings"
+                  >
+                    ⋮
+                  </button>
+                </div>
+                {renderSeats(table, metrics)}
               </div>
-              {renderSeats(table)}
-            </div>
-          ))}
+            )
+          })}
           {!tables.length && (
             <div className="canvas-empty">
               Use “Add table” to place your first table on the canvas.
@@ -1155,23 +1535,119 @@ function App() {
                   ×
                 </button>
               </header>
+              {activeTable.shape === 'circle' && (
+                <div className="menu-section">
+                  <span className="menu-label">Seat count</span>
+                  <label className="menu-input">
+                    <input
+                      type="number"
+                      min={1}
+                      max={24}
+                      inputMode="numeric"
+                      value={activeTable.seatCount}
+                      onChange={(event) =>
+                        updateSeatCount(
+                          activeTable.id,
+                          Number(event.target.value),
+                        )
+                      }
+                    />
+                  </label>
+                </div>
+              )}
+              {activeTable.shape === 'square' && activeDistribution && (
+                <div className="menu-section">
+                  <span className="menu-label">Seats per side</span>
+                  <div className="menu-grid">
+                    <label>
+                      <span>Top</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={24}
+                        inputMode="numeric"
+                        value={activeDistribution.top}
+                        onChange={(event) =>
+                          updateSquareDistribution(
+                            activeTable.id,
+                            'top',
+                            Number(event.target.value),
+                          )
+                        }
+                      />
+                    </label>
+                    <label>
+                      <span>Right</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={24}
+                        inputMode="numeric"
+                        value={activeDistribution.right}
+                        onChange={(event) =>
+                          updateSquareDistribution(
+                            activeTable.id,
+                            'right',
+                            Number(event.target.value),
+                          )
+                        }
+                      />
+                    </label>
+                    <label>
+                      <span>Bottom</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={24}
+                        inputMode="numeric"
+                        value={activeDistribution.bottom}
+                        onChange={(event) =>
+                          updateSquareDistribution(
+                            activeTable.id,
+                            'bottom',
+                            Number(event.target.value),
+                          )
+                        }
+                      />
+                    </label>
+                    <label>
+                      <span>Left</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={24}
+                        inputMode="numeric"
+                        value={activeDistribution.left}
+                        onChange={(event) =>
+                          updateSquareDistribution(
+                            activeTable.id,
+                            'left',
+                            Number(event.target.value),
+                          )
+                        }
+                      />
+                    </label>
+                  </div>
+                </div>
+              )}
               <div className="menu-section">
-                <span className="menu-label">Seat count</span>
-                <label className="menu-input">
-                  <input
-                    type="number"
-                    min={1}
-                    max={24}
-                    inputMode="numeric"
-                    value={activeTable.seatCount}
-                    onChange={(event) =>
-                      updateSeatCount(
-                        activeTable.id,
-                        Number(event.target.value),
-                      )
-                    }
-                  />
-                </label>
+                <span className="menu-label">Table shape</span>
+                <div className="menu-shape-toggle">
+                  <button
+                    type="button"
+                    className={activeTable.shape === 'circle' ? 'active' : ''}
+                    onClick={() => updateTableShape(activeTable.id, 'circle')}
+                  >
+                    Circle
+                  </button>
+                  <button
+                    type="button"
+                    className={activeTable.shape === 'square' ? 'active' : ''}
+                    onClick={() => updateTableShape(activeTable.id, 'square')}
+                  >
+                    Square
+                  </button>
+                </div>
               </div>
               <button
                 type="button"
