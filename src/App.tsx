@@ -579,7 +579,7 @@ function App() {
     fromSeatKey?: string,
   ) => {
     const key = seatKey(tableId, seatIndex)
-    if (!guestMap.has(guestId)) {
+    if (!guestMap.has(guestId) || fromSeatKey === key) {
       return
     }
 
@@ -588,11 +588,14 @@ function App() {
       const displacedGuest = nextAssignments[key]
 
       nextAssignments[key] = guestId
-      if (fromSeatKey) {
-        nextAssignments[fromSeatKey] = null
-      }
 
-      if (displacedGuest && displacedGuest !== guestId) {
+      if (fromSeatKey) {
+        if (displacedGuest && displacedGuest !== guestId) {
+          nextAssignments[fromSeatKey] = displacedGuest
+        } else {
+          nextAssignments[fromSeatKey] = null
+        }
+      } else if (displacedGuest && displacedGuest !== guestId) {
         returnGuestsToPool([displacedGuest])
       }
 
